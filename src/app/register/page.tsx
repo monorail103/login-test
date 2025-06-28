@@ -118,6 +118,8 @@ export default function RegisterPage() {
              </div>
           )}
 
+          <SubmitButton />
+
           <p className="mt-4 text-center text-sm text-gray-600">
             すでにアカウントをお持ちですか？{' '}
             <Link href="/login" className="font-medium text-blue-600 hover:text-blue-500">

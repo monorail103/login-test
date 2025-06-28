@@ -1,4 +1,5 @@
-import 'server-only'; // このモジュールがサーバーサイドでのみ使用されることを保証
+'use server';
+
 import { cookies } from 'next/headers';
 import prisma from './prisma';
 import { redirect } from 'next/navigation';
@@ -10,19 +11,20 @@ const SESSION_COOKIE_NAME = 'session_id';
  * @param userId - セッションを作成するユーザーのID
  */
 export async function createSession(userId: string) {
-  // セッションの有効期限（例: 24時間後）
-  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
-
+  // セッションの有効期限（例: 7日後）
+  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+  
   // データベースにセッションを作成
   const session = await prisma.session.create({
     data: {
-      userId: userId,
-      expiresAt: expiresAt,
+      userId,
+      expiresAt,
     },
   });
 
-  // クライアントにCookieを設定
-  (await cookies()).set(SESSION_COOKIE_NAME, session.id, {
+  // Next.js 15では cookies() は直接使用可能
+  const cookieStore = await cookies();
+  cookieStore.set(SESSION_COOKIE_NAME, session.id, {
     httpOnly: true, // JavaScriptからのアクセスを禁止
     secure: process.env.NODE_ENV === 'production', // 本番環境ではHTTPSのみ
     expires: expiresAt, // Cookieの有効期限
@@ -30,8 +32,8 @@ export async function createSession(userId: string) {
     path: '/', // アプリケーション全体で有効
   });
 
-  // 認証後のページ（ダッシュボードなど）へリダイレクト
-  redirect('/dashboard');
+  // セッション作成後はリダイレクトせず、呼び出し元でリダイレクトを処理
+  return { success: true, sessionId: session.id };
 }
 
 /**
@@ -39,7 +41,8 @@ export async function createSession(userId: string) {
  * @returns 認証されていればユーザー情報、そうでなければnull
  */
 export async function verifySession() {
-  const sessionId = (await cookies()).get(SESSION_COOKIE_NAME)?.value;
+  const cookieStore = await cookies();
+  const sessionId = cookieStore.get(SESSION_COOKIE_NAME)?.value;
 
   if (!sessionId) {
     return null;
@@ -71,7 +74,8 @@ export async function verifySession() {
  * ログアウト処理。セッションをDBから削除し、Cookieを無効化します。
  */
 export async function logout() {
-  const sessionId = (await cookies()).get(SESSION_COOKIE_NAME)?.value;
+  const cookieStore = await cookies();
+  const sessionId = cookieStore.get(SESSION_COOKIE_NAME)?.value;
 
   if (sessionId) {
     // データベースからセッションを削除
@@ -80,11 +84,12 @@ export async function logout() {
     }).catch(console.error); // 存在しない場合のエラーは無視
 
     // クライアントのCookieを削除（有効期限を過去に設定）
-    (await cookies()).set(SESSION_COOKIE_NAME, '', {
+    cookieStore.set(SESSION_COOKIE_NAME, '', {
       expires: new Date(0),
+      path: '/',
     });
   }
-  
+
   // ログインページにリダイレクト
   redirect('/login');
 }
