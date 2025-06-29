@@ -3,12 +3,14 @@
 import { z } from 'zod';
 import prisma from './prisma';
 import bcrypt from 'bcrypt';
-import { cookies } from 'next/headers';
+import { cookies, headers } from 'next/headers';
 import { authenticator } from 'otplib';
 import { toDataURL } from 'qrcode';
 import { randomBytes } from 'crypto';
 import { verifySession } from './session'; // ユーザー情報を得るためにインポート
 import { createSession, logout as performLogout } from './session'; // session.tsからインポート
+import { redirect } from 'next/navigation';
+import { revalidatePath } from 'next/cache';
 
 const RegisterSchema = z.object({
   name: z.string().min(1, { message: "名前は必須です。" }),
@@ -42,6 +44,27 @@ export type TwoFactorSetupState = {
   error?: string;
 };
 
+async function verifyTurnstile(token: string) {
+  const secret = process.env.TURNSTILE_SECRET_KEY;
+  const h = await headers();
+  const ip = h.get('cf-connecting-ip'); // Cloudflare経由の場合
+
+  const formData = new FormData();
+  formData.append('secret', secret!);
+  formData.append('response', token);
+  if (ip) {
+    formData.append('remoteip', ip);
+  }
+
+  const result = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+    method: 'POST',
+    body: formData,
+  });
+
+  const outcome = await result.json();
+  return outcome.success;
+}
+
 export async function register(prevState: State, formData: FormData): Promise<State> {
   const validatedFields = RegisterSchema.safeParse({
     name: formData.get('name'),
@@ -59,6 +82,13 @@ export async function register(prevState: State, formData: FormData): Promise<St
   const { name, email, password } = validatedFields.data;
 
   try {
+    const token = formData.get('cf-turnstile-response') as string;
+    const isHuman = await verifyTurnstile(token);
+
+    if (!isHuman) {
+      return { message: 'CAPTCHAの検証に失敗しました。もう一度お試しください。' };
+    }
+
     const existingUser = await prisma.user.findUnique({ where: { email } });
     if (existingUser) {
       return {
@@ -76,13 +106,16 @@ export async function register(prevState: State, formData: FormData): Promise<St
       },
     });
 
-    // ★ 変更点: ユーザー作成後にセッションを作成する
     await createSession(user.id);
 
-    // createSession内でリダイレクトされるため、ここでのreturnは通常到達しない
-    return {};
+    // ★ 変更: 登録成功後にダッシュボードへリダイレクト
+    redirect('/dashboard');
 
   } catch (error) {
+    // ★ 変更点: redirectによるエラーを再throwする
+    if ((error as any)?.digest?.startsWith('NEXT_REDIRECT')) {
+      throw error;
+    }
     console.error(error);
     return {
       message: 'サーバーエラーが発生しました。時間をおいて再度お試しください。',
@@ -112,43 +145,32 @@ export async function login(prevState: LoginState, formData: FormData): Promise<
   const { email, password } = validatedFields.data;
 
   try {
-    // 1. メールアドレスでユーザーを検索
     const user = await prisma.user.findUnique({
       where: { email },
     });
 
-    if (!user) {
-      // ユーザーが存在しない場合でも、パスワード検証と同じエラーメッセージを返す
-      // これにより、メールアドレスの存在を攻撃者に推測させない（ユーザー列挙攻撃の対策）
-      return { message: "メールアドレスまたはパスワードが正しくありません。" };
-    }
-
-    // 2. パスワードを比較
-    const isPasswordValid = await bcrypt.compare(password, user.password);
-
-    if (!isPasswordValid) {
+    if (!user || !(await bcrypt.compare(password, user.password))) {
       return { message: "メールアドレスまたはパスワードが正しくありません。" };
     }
 
     if (user.isTwoFactorEnabled) {
-      // 2FAが有効な場合、一時的なCookieにユーザーIDを保存し、2FAページへ
       (await cookies()).set('2fa_user_id', user.id, {
         httpOnly: true,
         secure: process.env.NODE_ENV === 'production',
-        maxAge: 60 * 5, // 5分間有効
+        maxAge: 60 * 5,
         path: '/',
       });
       redirect('/login/2fa');
     }
     
-    // 3. 認証成功、セッションを作成してリダイレクト
-    // 登録時に作成したcreateSession関数を再利用
     await createSession(user.id);
-    
-    // createSession内でリダイレクトされるため、ここは通常到達しない
-    return {};
+    redirect('/dashboard');
 
   } catch (error) {
+    // ★ 変更点: redirectによるエラーを再throwする
+    if ((error as any)?.digest?.startsWith('NEXT_REDIRECT')) {
+      throw error;
+    }
     console.error(error);
     return {
       message: 'サーバーエラーが発生しました。時間をおいて再度お試しください。',
@@ -163,7 +185,7 @@ export async function generateTwoFactorSetup() {
 
   // otplibを使って秘密鍵を生成
   const secret = authenticator.generateSecret();
-  const otpauth = authenticator.keyuri(user.email, 'YourAppName', secret); // 'YourAppName'はアプリ名に置き換える
+  const otpauth = authenticator.keyuri(user.email, 'login-test', secret);
 
   // 秘密鍵を一時的にDBに保存 (まだ有効化はしない)
   await prisma.user.update({
@@ -229,13 +251,11 @@ export async function verifyTwoFactorCode(prevState: any, formData: FormData) {
   const isValid = authenticator.check(code, user.twoFactorSecret);
 
   if (!isValid) {
-    // リカバリーコードも試す
     const recoveryCode = await prisma.recoveryCode.findFirst({
         where: { userId: user.id, code: code, used: false }
     });
 
     if (recoveryCode) {
-        // リカバリーコードを使用済みにする
         await prisma.recoveryCode.update({
             where: { id: recoveryCode.id },
             data: { used: true }
@@ -245,12 +265,44 @@ export async function verifyTwoFactorCode(prevState: any, formData: FormData) {
     }
   }
 
-  // 一時的なCookieを削除
   (await cookies()).delete('2fa_user_id');
 
-  // セッションを作成してログイン完了
   await createSession(user.id);
-  return {}; // createSession内でリダイレクトされる
+  
+  // ★ 変更点: ログイン完了後にダッシュボードへリダイレクト
+  redirect('/dashboard');
+}
+
+// セッションを破棄（削除）するサーバーアクション
+export async function revokeSession(sessionId: string) {
+  try {
+    const user = await verifySession();
+    if (!user) {
+      return { error: '認証されていません。' };
+    }
+
+    // 削除しようとしているセッションが本当に自分のものか確認
+    const sessionToRevoke = await prisma.session.findUnique({
+      where: { id: sessionId },
+    });
+
+    if (!sessionToRevoke || sessionToRevoke.userId !== user.id) {
+      return { error: 'このセッションを削除する権限がありません。' };
+    }
+
+    // データベースからセッションを削除
+    await prisma.session.delete({
+      where: { id: sessionId },
+    });
+    
+    // ページを再検証して表示を更新
+    revalidatePath('/dashboard/sessions');
+    return { success: true, message: 'セッションを正常に破棄しました。' };
+
+  } catch (error) {
+    console.error(error);
+    return { error: 'セッションの破棄中にエラーが発生しました。' };
+  }
 }
 
 // ログアウト用のアクション
@@ -258,6 +310,4 @@ export async function logoutAction() {
   await performLogout();
 }
 
-function redirect(arg0: string) {
-  throw new Error('Function not implemented.');
-}
+

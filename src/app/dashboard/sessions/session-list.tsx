@@ -1,0 +1,73 @@
+'use client';
+
+import type { Session } from '@prisma/client';
+import { useActionState } from 'react';
+import { useFormStatus } from 'react-dom';
+import { useEffect } from 'react';
+import { toast } from 'sonner';
+import { revokeSession } from '@/lib/actions';
+
+// 破棄ボタンのコンポーネント
+function RevokeButton({ isCurrent }: { isCurrent: boolean }) {
+  const { pending } = useFormStatus();
+
+  return (
+    <button
+      type="submit"
+      disabled={pending || isCurrent}
+      className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 disabled:bg-gray-400 disabled:cursor-not-allowed"
+      aria-disabled={pending || isCurrent}
+    >
+      {isCurrent ? '（現在のセッション）' : (pending ? '破棄中...' : 'セッションを破棄')}
+    </button>
+  );
+}
+
+// セッション一覧のメインコンポーネント
+export default function SessionList({ sessions, currentSessionId }: { sessions: Session[], currentSessionId: string | undefined }) {
+  // useActionStateを使用（Next.js 15の新しいAPI）
+  const [state, formAction] = useActionState(
+    async (prevState: any, formData: FormData) => {
+      const sessionId = formData.get('sessionId') as string;
+      return await revokeSession(sessionId);
+    },
+    null
+  );
+
+  useEffect(() => {
+    if (state?.success) {
+      toast.success(state.message);
+    }
+    if (state?.error) {
+      toast.error(state.error);
+    }
+  }, [state]);
+
+  return (
+    <div className="space-y-4">
+      {sessions.map((session) => {
+        const isCurrent = session.id === currentSessionId;
+        return (
+          <div
+            key={session.id}
+            className={`p-4 border rounded-lg flex flex-col sm:flex-row justify-between sm:items-center gap-4 ${isCurrent ? 'bg-blue-50 border-blue-200' : 'bg-white'}`}
+          >
+            <div>
+              <p className="font-semibold break-all">
+                {session.userAgent || '不明なデバイス'}
+              </p>
+              <p className="text-sm text-gray-600">
+                作成: {new Date(session.createdAt).toLocaleString()}
+              </p>
+            </div>
+            {/* 各セッションに対してフォームを作成し、sessionIdを渡す */}
+            <form action={formAction}>
+              <input type="hidden" name="sessionId" value={session.id} />
+              <RevokeButton isCurrent={isCurrent} />
+            </form>
+          </div>
+        );
+      })}
+    </div>
+  );
+}

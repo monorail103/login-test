@@ -1,8 +1,8 @@
 'use server';
 
-import { cookies } from 'next/headers';
+import { cookies, headers } from 'next/headers';
 import prisma from './prisma';
-import { redirect } from 'next/navigation';
+import { redirect } from 'next/navigation'; // ★ 追加
 
 const SESSION_COOKIE_NAME = 'session_id';
 
@@ -11,28 +11,31 @@ const SESSION_COOKIE_NAME = 'session_id';
  * @param userId - セッションを作成するユーザーのID
  */
 export async function createSession(userId: string) {
-  // セッションの有効期限（例: 7日後）
   const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
   
+  const h = await headers();
+  const ipAddress = h.get('x-forwarded-for') ?? h.get('cf-connecting-ip');
+  const userAgent = h.get('user-agent');
+
   // データベースにセッションを作成
   const session = await prisma.session.create({
     data: {
       userId,
       expiresAt,
+      ipAddress,
+      userAgent,
     },
   });
 
-  // Next.js 15では cookies() は直接使用可能
   const cookieStore = await cookies();
   cookieStore.set(SESSION_COOKIE_NAME, session.id, {
-    httpOnly: true, // JavaScriptからのアクセスを禁止
-    secure: process.env.NODE_ENV === 'production', // 本番環境ではHTTPSのみ
-    expires: expiresAt, // Cookieの有効期限
-    sameSite: 'lax', // CSRF対策
-    path: '/', // アプリケーション全体で有効
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    expires: expiresAt,
+    sameSite: 'lax',
+    path: '/',
   });
 
-  // セッション作成後はリダイレクトせず、呼び出し元でリダイレクトを処理
   return { success: true, sessionId: session.id };
 }
 

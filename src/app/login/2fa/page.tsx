@@ -1,7 +1,8 @@
 'use client';
 
-import { useFormState, useFormStatus } from 'react-dom';
-import { verifyTwoFactorCode } from '@/lib/actions'; // 後で作成するアクション
+import { useActionState } from 'react';
+import { useFormStatus } from 'react-dom';
+import { verifyTwoFactorCode } from '@/lib/actions';
 
 type State = {
   message?: string;
@@ -19,7 +20,7 @@ function SubmitButton() {
 }
 
 export default function TwoFactorLoginPage() {
-  const [state, formAction] = useFormState(verifyTwoFactorCode, initialState);
+  const [state, formAction] = useActionState(verifyTwoFactorCode, initialState);
 
   return (
     <div className="flex items-center justify-center min-h-screen bg-gray-100">

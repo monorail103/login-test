@@ -49,6 +49,12 @@ export default async function DashboardPage() {
           <Link href="/dashboard/2fa-setup" className="mt-2 inline-block text-blue-600 hover:underline">
             {user.isTwoFactorEnabled ? '2FA設定を管理' : '2FAを有効にする'}
           </Link>
+          <p className="mt-4 text-gray-600">
+            セッション管理を行うことで、現在のセッションを確認し、不要なセッションを破棄できます。
+          </p>
+          <Link href="/dashboard/sessions" className="font-medium text-blue-600 hover:underline">
+                セッションを管理
+            </Link>
         </div>
         <LogoutButton />
       </div>
