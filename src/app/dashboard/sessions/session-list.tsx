@@ -1,13 +1,12 @@
 'use client';
 
 import type { Session } from '@prisma/client';
-import { useActionState } from 'react';
 import { useFormStatus } from 'react-dom';
+import { useActionState } from 'react';
 import { useEffect } from 'react';
 import { toast } from 'sonner';
 import { revokeSession } from '@/lib/actions';
 
-// 破棄ボタンのコンポーネント
 function RevokeButton({ isCurrent }: { isCurrent: boolean }) {
   const { pending } = useFormStatus();
 
@@ -23,11 +22,9 @@ function RevokeButton({ isCurrent }: { isCurrent: boolean }) {
   );
 }
 
-// セッション一覧のメインコンポーネント
 export default function SessionList({ sessions, currentSessionId }: { sessions: Session[], currentSessionId: string | undefined }) {
-  // useActionStateを使用（Next.js 15の新しいAPI）
   const [state, formAction] = useActionState(
-    async (prevState: any, formData: FormData) => {
+    async (state: any, formData: FormData) => {
       const sessionId = formData.get('sessionId') as string;
       return await revokeSession(sessionId);
     },
@@ -57,10 +54,12 @@ export default function SessionList({ sessions, currentSessionId }: { sessions: 
                 {session.userAgent || '不明なデバイス'}
               </p>
               <p className="text-sm text-gray-600">
-                作成: {new Date(session.createdAt).toLocaleString()}
+                IPアドレス: {session.ipAddress || '不明'}
+              </p>
+              <p className="text-sm text-gray-500">
+                作成日時: {new Date(session.createdAt).toLocaleString('ja-JP')}
               </p>
             </div>
-            {/* 各セッションに対してフォームを作成し、sessionIdを渡す */}
             <form action={formAction}>
               <input type="hidden" name="sessionId" value={session.id} />
               <RevokeButton isCurrent={isCurrent} />

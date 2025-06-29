@@ -1,83 +1,39 @@
-'use client';
+import { verifySession } from '@/lib/session';
+import { redirect } from 'next/navigation';
+import prisma from '@/lib/prisma';
+import SessionList from './session-list';
+import { cookies } from 'next/headers';
+import Link from 'next/link';
 
-import type { Session } from '@prisma/client';
-import { useFormStatus } from 'react-dom';
-import { useEffect, useActionState } from 'react';
-import { toast } from 'sonner';
-import { revokeSession } from '@/lib/actions';
-
-// 破棄ボタンのコンポーネント
-function RevokeButton({ isCurrent }: { isCurrent: boolean }) {
-  const { pending } = useFormStatus();
-
-  return (
-    <button
-      type="submit"
-      disabled={pending || isCurrent}
-      className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 disabled:bg-gray-400 disabled:cursor-not-allowed"
-      aria-disabled={pending || isCurrent}
-    >
-      {isCurrent ? '（現在のセッション）' : (pending ? '破棄中...' : 'セッションを破棄')}
-    </button>
-  );
-}
-
-// セッション一覧のメインコンポーネント
-export default function SessionList({ sessions = [], currentSessionId }: { sessions?: Session[], currentSessionId?: string }) {
-  const [state, formAction] = useActionState(
-    async (prevState: any, formData: FormData) => {
-      const sessionId = formData.get('sessionId') as string;
-      return await revokeSession(sessionId);
-    },
-    null
-  );
-
-  useEffect(() => {
-    if (state?.success) {
-      toast.success(state.message);
-    }
-    if (state?.error) {
-      toast.error(state.error);
-    }
-  }, [state]);
-
-  // セッションが空の場合の表示
-  if (!sessions || sessions.length === 0) {
-    return (
-      <div className="text-center py-8 text-gray-500">
-        アクティブなセッションがありません。
-      </div>
-    );
+export default async function SessionsPage() {
+  const user = await verifySession();
+  if (!user) {
+    redirect('/login');
   }
 
+  const sessions = await prisma.session.findMany({
+    where: { userId: user.id },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  const currentSessionId = (await cookies()).get('session_id')?.value;
+
   return (
-    <div className="space-y-4">
-      {sessions.map((session) => {
-        const isCurrent = session.id === currentSessionId;
-        return (
-          <div
-            key={session.id}
-            className={`p-4 border rounded-lg flex flex-col sm:flex-row justify-between sm:items-center gap-4 ${isCurrent ? 'bg-blue-50 border-blue-200' : 'bg-white'}`}
-          >
-            <div>
-              <p className="font-semibold break-all">
-                {session.userAgent || '不明なデバイス'}
-              </p>
-              <p className="text-sm text-gray-600">
-                IPアドレス: {session.ipAddress || '不明'}
-              </p>
-              <p className="text-sm text-gray-500">
-                作成日時: {new Date(session.createdAt).toLocaleString('ja-JP')}
-              </p>
-            </div>
-            {/* 各セッションに対してフォームを作成し、sessionIdを渡す */}
-            <form action={formAction}>
-              <input type="hidden" name="sessionId" value={session.id} />
-              <RevokeButton isCurrent={isCurrent} />
-            </form>
-          </div>
-        );
-      })}
+    <div className="max-w-4xl mx-auto my-10 p-8">
+      <h1 className="text-3xl font-bold mb-6">セッション管理</h1>
+      <p className="mb-8 text-gray-600">現在アクティブなセッションの一覧です。不要なセッションや見に覚えのないセッションは破棄することができます。</p>
+      {sessions.length > 0 ? (
+        <SessionList sessions={sessions} currentSessionId={currentSessionId} />
+      ) : (
+        <div className="text-center py-8 text-gray-500">
+          <p>アクティブなセッションがありません。</p>
+        </div>
+      )}
+      <div className="mt-8">
+        <Link href="/dashboard" className="text-blue-600 hover:underline">
+          &larr; ダッシュボードに戻る
+        </Link>
+      </div>
     </div>
   );
 }
